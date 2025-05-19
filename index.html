@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>3D Parkour Level - Capsule Collision</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+<!-- Include Three.js -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.130.1/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.130.1/examples/js/controls/PointerLockControls.js"></script>
+
+<script>
+  // Scene setup
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87CEEB);
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  // Lighting
+  const light = new THREE.DirectionalLight(0xffffff, 1);
+  light.position.set(10, 50, 10);
+  scene.add(light);
+  scene.add(new THREE.AmbientLight(0x404040));
+
+  // Platforms
+  const platforms = [];
+  const platformMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+
+  function createPlatform(width, height, depth, position) {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const platform = new THREE.Mesh(geometry, platformMaterial);
+    platform.position.set(position.x, position.y, position.z);
+    scene.add(platform);
+    platforms.push(platform);
+  }
+
+  // First platform position (for spawn)
+  const firstPlatform = { x: 0, y: 5, z: -20 };
+
+  // Create platforms
+  createPlatform(10, 1, 10, firstPlatform);
+  createPlatform(15, 1, 15, {x: 20, y: 8, z: -40});
+  createPlatform(20, 1, 20, {x: 50, y: 12, z: -70});
+  createPlatform(25, 1, 25, {x: 90, y: 16, z: -110});
+  createPlatform(30, 1, 30, {x: 140, y: 20, z: -160});
+
+  // Capsule collider (taller)
+  const capsuleHeight = 1.6;
+  const capsuleRadius = 0.5;
+  const capsule = {
+    start: new THREE.Vector3(firstPlatform.x, firstPlatform.y + 2.0, firstPlatform.z),
+    end: new THREE.Vector3(firstPlatform.x, firstPlatform.y + 2.0 + capsuleHeight, firstPlatform.z),
+    radius: capsuleRadius
+  };
+
+  // Pointer Lock Controls
+  const controls = new THREE.PointerLockControls(camera, renderer.domElement);
+  document.body.addEventListener('click', () => controls.lock());
+
+  // Movement
+  let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+  let isJumping = false;
+  let velocityY = 0;
+  const moveSpeed = 0.5;
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'w') moveForward = true;
+    if (event.key === 's') moveBackward = true;
+    if (event.key === 'a') moveLeft = true;
+    if (event.key === 'd') moveRight = true;
+    if (event.key === ' ' && !isJumping) {
+      velocityY = 1.5;  // higher jump
+      isJumping = true;
+    }
+  });
+
+  document.addEventListener('keyup', (event) => {
+    if (event.key === 'w') moveForward = false;
+    if (event.key === 's') moveBackward = false;
+    if (event.key === 'a') moveLeft = false;
+    if (event.key === 'd') moveRight = false;
+  });
+
+  // Accurate Capsule Collision
+  function checkCollisions() {
+    let onGround = false;
+    const capsuleLine = new THREE.Line3(capsule.start, capsule.end);
+
+    for (const platform of platforms) {
+      const box = new THREE.Box3().setFromObject(platform);
+
+      // Find the closest point on the platform to the capsule line
+      const boxCenter = box.getCenter(new THREE.Vector3());
+      const closestPointOnLine = capsuleLine.closestPointToPoint(boxCenter, true, new THREE.Vector3());
+      const closestPointOnBox = box.clampPoint(closestPointOnLine, new THREE.Vector3());
+
+      const actualClosest = capsuleLine.closestPointToPoint(closestPointOnBox, true, new THREE.Vector3());
+      const distance = actualClosest.distanceTo(closestPointOnBox);
+
+      if (distance < capsule.radius) {
+        // Landed on top of platform
+        const platformTop = box.max.y;
+        const height = capsule.end.y - capsule.start.y;
+        const newY = platformTop + 0.01 + height;
+        capsule.start.y = newY - height;
+        capsule.end.y = newY;
+
+        velocityY = 0;
+        isJumping = false;
+        onGround = true;
+        break;
+      }
+    }
+
+    return onGround;
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    // Apply gravity
+    velocityY -= 0.05;
+    capsule.start.y += velocityY;
+    capsule.end.y += velocityY;
+
+    // Collision and respawn
+    if (!checkCollisions() && capsule.start.y < -50) {
+      capsule.start.set(firstPlatform.x, firstPlatform.y + 2.0, firstPlatform.z);
+      capsule.end.set(firstPlatform.x, firstPlatform.y + 2.0 + capsuleHeight, firstPlatform.z);
+      velocityY = 0;
+    }
+
+    // Movement direction
+    const direction = new THREE.Vector3();
+    if (moveForward) direction.z -= 1;
+    if (moveBackward) direction.z += 1;
+    if (moveLeft) direction.x -= 1;
+    if (moveRight) direction.x += 1;
+
+    if (direction.lengthSq() > 0) {
+      direction.normalize();
+      direction.applyEuler(camera.rotation);
+      capsule.start.addScaledVector(direction, moveSpeed);
+      capsule.end.addScaledVector(direction, moveSpeed);
+    }
+
+    // Keep camera at top of capsule
+    camera.position.copy(capsule.end);
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+  // Handle window resize
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+
+</body>
+</html>
