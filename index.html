@@ -3,21 +3,53 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>3D Parkour Level - Room Movement with Slide Cooldown</title>
+  <title>3D Parkour Level - Gun Shooting</title>
   <style>
     body { margin: 0; overflow: hidden; }
     canvas { display: block; }
+
+    /* 🔫 Crosshair Styling */
+    #crosshair {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 20px;
+      color: white;
+      pointer-events: none;
+      user-select: none;
+      z-index: 10;
+      font-family: monospace;
+    }
   </style>
 </head>
 <body>
+
+<!-- 🎯 Crosshair -->
+<div id="crosshair">+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.130.1/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.130.1/examples/js/controls/PointerLockControls.js"></script>
 
 <script>
+
+  document.addEventListener('keydown', function(event) {
+  // Prevent specific browser shortcuts (e.g., F5, Ctrl+R, etc.)
+  if (event.key === 'F5' || 
+      (event.ctrlKey && event.key === 'w') || 
+      (event.ctrlKey && event.key === 's') || 
+      (event.key === 'F12') || 
+      (event.key === 'F11') || 
+      (event.key === 'Escape')) {
+    event.preventDefault(); // Cancel default action (like refresh)
+      }})
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87CEEB);
+
   const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  scene.add(camera);
+
   const renderer = new THREE.WebGLRenderer();
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.body.appendChild(renderer.domElement);
@@ -27,21 +59,75 @@
   scene.add(light);
   scene.add(new THREE.AmbientLight(0x404040));
 
-  const roomWidth = 50;
-  const roomHeight = 20;
-  const roomDepth = 50;
-  const wallMaterial = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, side: THREE.BackSide });
-  const room = new THREE.Mesh(
-    new THREE.BoxGeometry(roomWidth, roomHeight, roomDepth),
-    wallMaterial
-  );
-  room.position.set(0, roomHeight / 2, 0);
-  scene.add(room);
+  // Gun
+  const gunGeometry = new THREE.BoxGeometry(0.4, 0.2, 1);
+  const gunMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
+  const gun = new THREE.Mesh(gunGeometry, gunMaterial);
+  gun.position.set(0.6, -0.4, -1);
+  camera.add(gun);
 
-  // Capsule settings
-  const standingHeight = 1.6;
-  const crouchHeight = 0.8;
-  const capsuleRadius = 0.5;
+  const controls = new THREE.PointerLockControls(camera, renderer.domElement);
+  document.body.addEventListener('click', () => controls.lock());
+
+  // Room and walls
+  const roomGroup = new THREE.Group();
+  const roomWidth = 50, roomHeight = 20, roomDepth = 50;
+  const wallColors = {
+    floor: 0x444444, ceiling: 0x666666,
+    back: 0x777777, front: 0x888888,
+    left: 0x999999, right: 0xaaaaaa
+  };
+
+  function createWall(width, height, color) {
+    const geometry = new THREE.PlaneGeometry(width, height);
+    const material = new THREE.MeshStandardMaterial({ color, side: THREE.BackSide });
+    return new THREE.Mesh(geometry, material);
+  }
+
+  const floor = createWall(roomWidth, roomDepth, wallColors.floor);
+  floor.rotation.x = Math.PI / 2;
+  roomGroup.add(floor);
+
+  const ceiling = createWall(roomWidth, roomDepth, wallColors.ceiling);
+  ceiling.rotation.x = -Math.PI / 2;
+  ceiling.position.y = roomHeight;
+  roomGroup.add(ceiling);
+
+  const backWall = createWall(roomWidth, roomHeight, wallColors.back);
+  backWall.position.z = -roomDepth / 2;
+  backWall.position.y = roomHeight / 2;
+  backWall.rotation.y = Math.PI;
+  roomGroup.add(backWall);
+
+  const frontWall = createWall(roomWidth, roomHeight, wallColors.front);
+  frontWall.position.z = roomDepth / 2;
+  frontWall.position.y = roomHeight / 2;
+  roomGroup.add(frontWall);
+
+  const leftWall = createWall(roomDepth, roomHeight, wallColors.left);
+  leftWall.rotation.y = Math.PI / 2;
+  leftWall.position.x = -roomWidth / 2;
+  leftWall.position.y = roomHeight / 2;
+  roomGroup.add(leftWall);
+
+  const rightWall = createWall(roomDepth, roomHeight, wallColors.right);
+  rightWall.rotation.y = -Math.PI / 2;
+  rightWall.position.x = roomWidth / 2;
+  rightWall.position.y = roomHeight / 2;
+  roomGroup.add(rightWall);
+
+  scene.add(roomGroup);
+
+  // Movement
+  let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+  let isJumping = false, isCrouching = false, isSliding = false, shiftPressed = false;
+  let slideTimer = 0, velocityY = 0;
+  let moveSpeed = 0.25, slideCooldown = 0;
+  const maxSlideTime = 0.6, slideSpeed = 0.6;
+  const slideCooldownDuration = 0.3;
+  const heightAdjustSpeed = 0.1, slideCameraOffset = 0.6, headOffset = 0.1;
+
+  const standingHeight = 1.6, crouchHeight = 0.8, capsuleRadius = 0.5;
   const spawnPosition = new THREE.Vector3(0, 2, 0);
   const capsule = {
     start: spawnPosition.clone(),
@@ -50,56 +136,27 @@
     currentHeight: standingHeight
   };
 
-  const controls = new THREE.PointerLockControls(camera, renderer.domElement);
-  document.body.addEventListener('click', () => controls.lock());
-
-  let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
-  let isJumping = false;
-  let isCrouching = false;
-  let isSliding = false;
-  let slideTimer = 0;
-  const maxSlideTime = 0.6; // seconds
-  const slideSpeed = 0.6;   // starting slide speed
-  let velocityY = 0;
-  let moveSpeed = 0.25;  // normal speed
-
-  let slideCooldown = 0;  // cooldown timer in seconds
-  const slideCooldownDuration = 0.3;
-
-  const heightAdjustSpeed = 0.1;
-  const slideCameraOffset = 0.6; // how much lower camera moves during slide
-
-  // To track shift key pressed state
-  let shiftPressed = false;
+  function canSlide() {
+    return (moveForward || moveBackward || moveLeft || moveRight)
+      && !isSliding && !isCrouching && slideCooldown <= 0 && checkCollisions();
+  }
 
   document.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
-    if (event.ctrlKey && ['w', 'a', 's', 'd'].includes(key)) {
-      event.preventDefault();
-    }
     if (key === 'w') moveForward = true;
     if (key === 's') moveBackward = true;
     if (key === 'a') moveLeft = true;
     if (key === 'd') moveRight = true;
-
     if (event.key === ' ') {
       if (!isJumping && !isSliding) {
         velocityY = 0.3;
         isJumping = true;
       }
     }
-
-    if (event.key === 'Control') {
-      isCrouching = true;
-      // If crouching right after sliding cooldown ends, reset shiftPressed so slide won't restart
-      if (slideCooldown > 0 && !isSliding) {
-        shiftPressed = false;
-      }
-    }
-
+    if (event.key === 'Control') isCrouching = !isCrouching;
     if (event.key === 'Shift') {
       shiftPressed = true;
-      if ((moveForward || moveBackward || moveLeft || moveRight) && !isSliding && !isCrouching && slideCooldown <= 0) {
+      if (canSlide()) {
         isSliding = true;
         slideTimer = maxSlideTime;
       }
@@ -107,20 +164,20 @@
   });
 
   document.addEventListener('keyup', (event) => {
-    if (event.key === 'w') moveForward = false;
-    if (event.key === 's') moveBackward = false;
-    if (event.key === 'a') moveLeft = false;
-    if (event.key === 'd') moveRight = false;
-    if (event.key === 'Control') isCrouching = false;
-    if (event.key === 'Shift') {
-      shiftPressed = false;
+    const key = event.key.toLowerCase();
+    if (key === 'w') moveForward = false;
+    if (key === 's') moveBackward = false;
+    if (key === 'a') moveLeft = false;
+    if (key === 'd') moveRight = false;
+    if (key === 'Shift') shiftPressed = false;
+    if (!shiftPressed && isSliding) {
+      isSliding = false;
+      slideCooldown = slideCooldownDuration;
     }
   });
 
   function checkCollisions() {
     let onGround = false;
-
-    // Floor collision
     if (capsule.start.y <= capsuleRadius) {
       const height = capsule.end.y - capsule.start.y;
       capsule.start.y = capsuleRadius;
@@ -129,38 +186,84 @@
       isJumping = false;
       onGround = true;
     }
-
-    // Ceiling collision
     if (capsule.end.y >= roomHeight) {
       const height = capsule.end.y - capsule.start.y;
       capsule.end.y = roomHeight;
       capsule.start.y = capsule.end.y - height;
       velocityY = Math.min(velocityY, 0);
     }
-
-    // Wall collisions (x and z)
     const halfWidth = roomWidth / 2 - capsuleRadius;
     const halfDepth = roomDepth / 2 - capsuleRadius;
-
     for (let point of [capsule.start, capsule.end]) {
       point.x = Math.max(-halfWidth, Math.min(halfWidth, point.x));
       point.z = Math.max(-halfDepth, Math.min(halfDepth, point.z));
     }
-
     return onGround;
   }
 
-  function animate() {
-    setTimeout(() => {
-      requestAnimationFrame(animate);
+  // ✅ SHOOTING FUNCTION
+  function shoot() {
+    const bulletGeo = new THREE.SphereGeometry(0.1, 8, 8);
+    const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+    const bullet = new THREE.Mesh(bulletGeo, bulletMat);
 
-      // Handle slide cooldown timer
+    bullet.position.copy(camera.position);
+    const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+    bullet.userData = { velocity: direction.clone().multiplyScalar(1), aliveTime: 0 };
+
+    scene.add(bullet);
+    bullets.push(bullet);
+
+    createMuzzleFlash();
+  }
+
+  function createMuzzleFlash() {
+    const flashGeo = new THREE.SphereGeometry(0.05, 8, 8);
+    const flashMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+    const flash = new THREE.Mesh(flashGeo, flashMat);
+    flash.position.copy(gun.getWorldPosition(new THREE.Vector3()));
+    flash.translateZ(-0.5);
+    scene.add(flash);
+    setTimeout(() => scene.remove(flash), 100);
+  }
+
+  document.addEventListener('mousedown', shoot);
+
+  // Targets
+  const bullets = [];
+  const targets = [];
+
+  function createTarget(x, y, z) {
+    const geometry = new THREE.SphereGeometry(0.5, 16, 16);
+    const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+    const sphere = new THREE.Mesh(geometry, material);
+    sphere.position.set(x, y, z);
+    scene.add(sphere);
+    targets.push(sphere);
+  }
+
+  createTarget(0, 2, -10);
+  createTarget(-10, 2, -10);
+  createTarget(10, 2, -10);
+
+  // Animation Loop
+  const clock = new THREE.Clock();
+  let logicAccumulator = 0;
+  const tickRate = 1 / 60;
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const delta = clock.getDelta();
+    logicAccumulator += delta;
+
+    while (logicAccumulator >= tickRate) {
+      logicAccumulator -= tickRate;
+
       if (!isSliding && slideCooldown > 0) {
-        slideCooldown -= 1 / 60;
+        slideCooldown -= tickRate;
         if (slideCooldown < 0) slideCooldown = 0;
       }
 
-      // Smoothly adjust capsule height for crouch/stand
       const targetHeight = isCrouching ? crouchHeight : standingHeight;
       if (Math.abs(capsule.currentHeight - targetHeight) > 0.01) {
         capsule.currentHeight += (targetHeight - capsule.currentHeight) * heightAdjustSpeed;
@@ -169,35 +272,30 @@
         capsule.currentHeight = targetHeight;
       }
 
-      // Sliding speed logic with smooth slow down
       if (isSliding) {
-        const slideProgress = 1 - slideTimer / maxSlideTime; // 0 to 1
+        const slideProgress = 1 - slideTimer / maxSlideTime;
         moveSpeed = slideSpeed * (1 - slideProgress) + 0.12 * slideProgress;
-
-        slideTimer -= 1 / 60;
+        slideTimer -= tickRate;
         if (slideTimer <= 0 || !(moveForward || moveBackward || moveLeft || moveRight)) {
           isSliding = false;
           slideCooldown = slideCooldownDuration;
-          shiftPressed = false; // reset shift state so slide can't restart from held key
+          shiftPressed = false;
         }
       } else {
         moveSpeed = isCrouching ? 0.12 : 0.25;
       }
 
-      // Gravity
       velocityY -= 0.0125;
       capsule.start.y += velocityY;
       capsule.end.y += velocityY;
 
       const onGround = checkCollisions();
-
       if (!onGround && capsule.start.y < -50) {
         capsule.start.copy(spawnPosition);
         capsule.end.copy(spawnPosition).add(new THREE.Vector3(0, standingHeight, 0));
         velocityY = 0;
       }
 
-      // Movement direction
       const direction = new THREE.Vector3();
       if (moveForward) direction.z -= 1;
       if (moveBackward) direction.z += 1;
@@ -205,9 +303,7 @@
       if (moveRight) direction.x += 1;
 
       if (direction.lengthSq() > 0) {
-        direction.normalize();
-        direction.applyEuler(camera.rotation);
-
+        direction.normalize().applyEuler(camera.rotation);
         const move = direction.multiplyScalar(moveSpeed);
         const newStart = capsule.start.clone().add(move);
         const newEnd = capsule.end.clone().add(move);
@@ -224,21 +320,47 @@
         }
       }
 
-      // Camera position - base is capsule top minus crouch offset
-      // Slide lowers camera further by slideCameraOffset smoothly
       const baseCamY = capsule.end.y - (standingHeight - capsule.currentHeight);
       let targetCamY = baseCamY;
-      if (isSliding) {
-        targetCamY -= slideCameraOffset;
-      }
-      // Smooth camera Y transition
-      if (!camera.position.y) camera.position.y = targetCamY;
+      if (isSliding) targetCamY -= slideCameraOffset;
+
       camera.position.x = capsule.end.x;
       camera.position.z = capsule.end.z;
       camera.position.y += (targetCamY - camera.position.y) * 0.15;
+      camera.position.y = Math.max(camera.position.y, capsule.start.y + headOffset);
+    }
 
-      renderer.render(scene, camera);
-    }, 1000 / 60);
+    // Move bullets and check for collisions
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const bullet = bullets[i];
+      bullet.position.add(bullet.userData.velocity);
+      bullet.userData.aliveTime += tickRate;
+
+      // Bullet lifetime
+      if (bullet.userData.aliveTime > 2) {
+        scene.remove(bullet);
+        bullets.splice(i, 1);
+        continue;
+      }
+
+      // Collision with targets
+      for (let j = 0; j < targets.length; j++) {
+        const target = targets[j];
+        if (!target.visible) continue;
+
+        const distance = bullet.position.distanceTo(target.position);
+        if (distance < 0.6) {
+          target.visible = false;
+          setTimeout(() => { target.visible = true; }, 5000);
+
+          scene.remove(bullet);
+          bullets.splice(i, 1);
+          break;
+        }
+      }
+    }
+
+    renderer.render(scene, camera);
   }
 
   animate();
