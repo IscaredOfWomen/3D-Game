@@ -8,7 +8,6 @@
     body { margin: 0; overflow: hidden; }
     canvas { display: block; }
 
-    /* 🔫 Crosshair Styling */
     #crosshair {
       position: fixed;
       top: 50%;
@@ -25,24 +24,38 @@
 </head>
 <body>
 
-<!-- 🎯 Crosshair -->
+ <div id="hud" style="position: fixed; top: 10px; left: 10px; color: white; font-family: monospace; z-index: 20;">
+   Health: <span id="health">100</span><br />
+  Ammo: <span id="ammo">10</span>
+ </div>
+  
+
 <div id="crosshair">+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.130.1/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.130.1/examples/js/controls/PointerLockControls.js"></script>
 
 <script>
-
   document.addEventListener('keydown', function(event) {
-  // Prevent specific browser shortcuts (e.g., F5, Ctrl+R, etc.)
-  if (event.key === 'F5' || 
-      (event.ctrlKey && event.key === 'w') || 
-      (event.ctrlKey && event.key === 's') || 
-      (event.key === 'F12') || 
-      (event.key === 'F11') || 
-      (event.key === 'Escape')) {
-    event.preventDefault(); // Cancel default action (like refresh)
-      }})
+    if (event.key === 'F5' || 
+        (event.ctrlKey && event.key === 'w') || 
+        (event.ctrlKey && event.key === 's') || 
+        (event.key === 'F12') || 
+        (event.key === 'F11') || 
+        (event.key === 'Escape')) {
+      event.preventDefault();
+    }
+  });
+
+  let playerHealth = 100;
+  let maxAmmo = 10;
+  let currentAmmo = maxAmmo;
+  let isReloading = false;
+
+
+  let playerShootCooldown = 0;
+  const playerShootCooldownTime = 0.3; // seconds between shots
+
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87CEEB);
@@ -59,17 +72,40 @@
   scene.add(light);
   scene.add(new THREE.AmbientLight(0x404040));
 
-  // Gun
-  const gunGeometry = new THREE.BoxGeometry(0.4, 0.2, 1);
-  const gunMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
-  const gun = new THREE.Mesh(gunGeometry, gunMaterial);
-  gun.position.set(0.6, -0.4, -1);
-  camera.add(gun);
+// Improved Gun Model
+const gun = new THREE.Group();
+
+// Slide (top part)
+const slideGeo = new THREE.BoxGeometry(0.3, 0.2, 0.8);
+const slideMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+const slide = new THREE.Mesh(slideGeo, slideMat);
+slide.position.set(0, 0.1, -0.4);
+gun.add(slide);
+
+// Barrel
+const barrelGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.4, 8);
+const barrelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+const barrel = new THREE.Mesh(barrelGeo, barrelMat);
+barrel.rotation.x = Math.PI / 2;
+barrel.position.set(0, 0.1, -0.8);
+gun.add(barrel);
+
+// Grip (handle)
+const gripGeo = new THREE.BoxGeometry(0.25, 0.4, 0.15);
+const gripMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+const grip = new THREE.Mesh(gripGeo, gripMat);
+grip.position.set(0, -0.15, -0.15);
+gun.add(grip);
+
+// Position gun in camera
+gun.position.set(0, -0.35, -0.6);
+camera.add(gun);
+
 
   const controls = new THREE.PointerLockControls(camera, renderer.domElement);
   document.body.addEventListener('click', () => controls.lock());
 
-  // Room and walls
+  // Room
   const roomGroup = new THREE.Group();
   const roomWidth = 50, roomHeight = 20, roomDepth = 50;
   const wallColors = {
@@ -118,7 +154,7 @@
 
   scene.add(roomGroup);
 
-  // Movement
+  // Movement and Physics
   let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
   let isJumping = false, isCrouching = false, isSliding = false, shiftPressed = false;
   let slideTimer = 0, velocityY = 0;
@@ -201,21 +237,49 @@
     return onGround;
   }
 
-  // ✅ SHOOTING FUNCTION
+  // 🔫 SHOOTING
   function shoot() {
-    const bulletGeo = new THREE.SphereGeometry(0.1, 8, 8);
-    const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-    const bullet = new THREE.Mesh(bulletGeo, bulletMat);
+  if (playerShootCooldown > 0 || isReloading || currentAmmo <= 0) return;
 
-    bullet.position.copy(camera.position);
-    const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
-    bullet.userData = { velocity: direction.clone().multiplyScalar(1), aliveTime: 0 };
+  playerShootCooldown = playerShootCooldownTime;
+  currentAmmo--;
 
-    scene.add(bullet);
-    bullets.push(bullet);
+  const bulletGeo = new THREE.SphereGeometry(0.1, 8, 8);
+  const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+  const bullet = new THREE.Mesh(bulletGeo, bulletMat);
 
-    createMuzzleFlash();
+  bullet.position.copy(camera.position);
+  const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+  bullet.userData = { velocity: direction.clone().multiplyScalar(1), aliveTime: 0 };
+
+  scene.add(bullet);
+  bullets.push(bullet);
+
+  createMuzzleFlash();
+  updateHUD();
+} 
+
+  // RELOAD
+  function reload() {
+    if (currentAmmo < maxAmmo && !isReloading) {
+      isReloading = true;
+      setTimeout(() => {
+        currentAmmo = maxAmmo;
+        isReloading = false;
+        updateHUD();
+      }, 1000); // 1 second reload time
+    }
   }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'r' || event.key === 'R') reload();
+  });
+
+  function updateHUD() {
+  document.getElementById("health").textContent = playerHealth;
+  document.getElementById("ammo").textContent = isReloading ? "Reloading..." : currentAmmo;
+  }
+
 
   function createMuzzleFlash() {
     const flashGeo = new THREE.SphereGeometry(0.05, 8, 8);
@@ -229,7 +293,7 @@
 
   document.addEventListener('mousedown', shoot);
 
-  // Targets
+  // 🎯 Targets
   const bullets = [];
   const targets = [];
 
@@ -246,7 +310,89 @@
   createTarget(-10, 2, -10);
   createTarget(10, 2, -10);
 
-  // Animation Loop
+  class Enemy {
+  constructor(position) {
+    this.mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 2, 1),
+      new THREE.MeshStandardMaterial({ color: 0xff4444 })
+    );
+    this.mesh.position.copy(position);
+    scene.add(this.mesh);
+
+    this.bullets = [];
+    this.shootCooldown = 0;
+  }
+
+  update(delta) {
+    const playerPosition = new THREE.Vector3();
+    camera.getWorldPosition(playerPosition);
+
+    const distanceToPlayer = this.mesh.position.distanceTo(playerPosition);
+    const detectionRange = 20;
+
+    if (distanceToPlayer <= detectionRange) {
+      const direction = playerPosition.clone().sub(this.mesh.position).normalize();
+      this.mesh.lookAt(playerPosition);
+
+      if (this.shootCooldown <= 0) {
+        this.shoot(direction);
+        this.shootCooldown = 1;
+      } else {
+        this.shootCooldown -= delta;
+      }
+    }
+
+    for (let i = this.bullets.length - 1; i >= 0; i--) {
+      const bullet = this.bullets[i];
+      bullet.position.add(bullet.userData.velocity);
+      bullet.userData.aliveTime += delta;
+
+      if (bullet.userData.aliveTime > 5) {
+        scene.remove(bullet);
+        this.bullets.splice(i, 1);
+      }
+
+      if (bullet.position.distanceTo(camera.position) < 1) {
+  playerHealth -= 10;
+  console.log(`💥 Player hit! Health: ${playerHealth}`);
+  if (playerHealth <= 0) {
+    alert("☠️ You died!");
+    location.reload(); // simple reset
+  }
+
+  scene.remove(bullet);
+  this.bullets.splice(i, 1);
+  updateHUD();
+}
+    }
+  }
+
+  shoot(direction) {
+    const bulletGeo = new THREE.SphereGeometry(0.1, 8, 8);
+    const bulletMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+    const bullet = new THREE.Mesh(bulletGeo, bulletMat);
+
+    bullet.position.copy(this.mesh.position).add(new THREE.Vector3(0, 0.5, 0));
+    bullet.userData = {
+      velocity: direction.clone().multiplyScalar(0.2),
+      aliveTime: 0
+    };
+    this.bullets.push(bullet);
+    scene.add(bullet);
+  }
+}
+
+const enemies = [];
+
+function createEnemy(x, y, z) {
+  const enemy = new Enemy(new THREE.Vector3(x, y, z));
+  enemies.push(enemy);
+}
+
+  createEnemy(5, 1, -15);
+  createEnemy(-5, 1, -12);
+
+  // 🎬 Animation
   const clock = new THREE.Clock();
   let logicAccumulator = 0;
   const tickRate = 1 / 60;
@@ -255,9 +401,17 @@
     requestAnimationFrame(animate);
     const delta = clock.getDelta();
     logicAccumulator += delta;
+    
+    updateHUD();
 
     while (logicAccumulator >= tickRate) {
       logicAccumulator -= tickRate;
+
+      if (playerShootCooldown > 0) {
+          playerShootCooldown -= tickRate;
+        if (playerShootCooldown < 0) playerShootCooldown = 0;
+      }
+
 
       if (!isSliding && slideCooldown > 0) {
         slideCooldown -= tickRate;
@@ -328,38 +482,58 @@
       camera.position.z = capsule.end.z;
       camera.position.y += (targetCamY - camera.position.y) * 0.15;
       camera.position.y = Math.max(camera.position.y, capsule.start.y + headOffset);
+
+      // Update enemies
+      enemies.forEach(enemy => enemy.update(tickRate));
     }
 
-    // Move bullets and check for collisions
     for (let i = bullets.length - 1; i >= 0; i--) {
-      const bullet = bullets[i];
-      bullet.position.add(bullet.userData.velocity);
-      bullet.userData.aliveTime += tickRate;
+  const bullet = bullets[i];
+  bullet.position.add(bullet.userData.velocity);
+  bullet.userData.aliveTime += tickRate;
 
-      // Bullet lifetime
-      if (bullet.userData.aliveTime > 2) {
-        scene.remove(bullet);
-        bullets.splice(i, 1);
-        continue;
-      }
+  if (bullet.userData.aliveTime > 2) {
+    scene.remove(bullet);
+    bullets.splice(i, 1);
+    continue;
+  }
 
-      // Collision with targets
-      for (let j = 0; j < targets.length; j++) {
-        const target = targets[j];
-        if (!target.visible) continue;
+  let hit = false;
 
-        const distance = bullet.position.distanceTo(target.position);
-        if (distance < 0.6) {
-          target.visible = false;
-          setTimeout(() => { target.visible = true; }, 5000);
+  // Check enemies
+  for (let j = enemies.length - 1; j >= 0; j--) {
+    const enemy = enemies[j];
+    const distance = bullet.position.distanceTo(enemy.mesh.position);
+    if (distance < 1.0) {
+      scene.remove(enemy.mesh);
+      enemy.bullets.forEach(b => scene.remove(b));
+      enemies.splice(j, 1);
 
-          scene.remove(bullet);
-          bullets.splice(i, 1);
-          break;
-        }
-      }
+      scene.remove(bullet);
+      bullets.splice(i, 1);
+      hit = true;
+      break;
     }
+  }
 
+  if (hit) continue;
+
+  // Check targets
+  for (let j = 0; j < targets.length; j++) {
+    const target = targets[j];
+    if (!target.visible) continue;
+
+    const distance = bullet.position.distanceTo(target.position);
+    if (distance < 0.6) {
+      target.visible = false;
+      setTimeout(() => { target.visible = true; }, 5000);
+
+      scene.remove(bullet);
+      bullets.splice(i, 1);
+      break;
+    }
+  }
+}
     renderer.render(scene, camera);
   }
 
